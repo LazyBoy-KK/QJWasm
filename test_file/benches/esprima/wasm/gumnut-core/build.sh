@@ -1,0 +1,1 @@
+~/wasi-sdk-23.0-x86_64-linux/bin/clang -O3 *.c -I./ -mexec-model=reactor -Wl,--export=malloc -Wl,--export=free -o ./gumnut.wasm

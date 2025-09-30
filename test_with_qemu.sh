@@ -1,0 +1,1 @@
+~/github-code/qemu-8.2.0/build/qemu-system-arm -M vexpress-a9 -m 64M -kernel ~/github-code/buildroot-2025.05.2/output/images/zImage -dtb ~/github-code/buildroot-2025.05.2/output/images/vexpress-v2p-ca9.dtb -drive file=~/github-code/buildroot-2025.05.2/output/images/rootfs.ext2,if=sd,format=raw -append "root=/dev/mmcblk0 console=ttyAMA0" -no-reboot -nographic

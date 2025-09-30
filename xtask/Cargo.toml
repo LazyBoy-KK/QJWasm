@@ -1,0 +1,13 @@
+[package]
+name = "quickjs-wasm-xtask"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "quickjs-wasm-xtask"
+path = "main.rs"
+
+[dependencies]
+cargo_metadata = "0.15.1"
+anyhow = "1.0"
+once_cell = "1.0"

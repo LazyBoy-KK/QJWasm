@@ -1,0 +1,7 @@
+[alias]
+xtask = "run --package quickjs-wasm-xtask --"
+xrun = "xtask xrun"
+xbuild = "xtask xbuild"
+asan = "xtask asan"
+xclean = "xtask xclean"
+build-android = "xtask build-android"

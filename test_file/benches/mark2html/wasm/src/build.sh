@@ -1,0 +1,1 @@
+~/wasi-sdk-23.0-x86_64-linux/bin/clang ./fmt_html.c ./fmt_json.c ./md.c ./md4c.c ./wbuf.c ./wlib.c -I./ -mexec-model=reactor -o markdown.wasm
