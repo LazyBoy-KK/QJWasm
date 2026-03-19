@@ -22,8 +22,10 @@ rquickjs = { path = './rquickjs', default-features = false, features = [
 ] }
 once_cell = '1.0'
 defer-lite = "1.0.0"
-runtime = { path = "../iwasm-rs/runtime", default-features = false, features = ["std", "mmap", "wasi", "disable-alltargets-init", "libloading", "threads", "quickjs-wasm"] }
+runtime = { path = "../iwasm-rs/runtime", default-features = false, features = ["std", "mmap", "disable-alltargets-init", "libloading", "threads", "quickjs-wasm"] }
 libc = { version = "0.2", optional = true }
+wasi-common = { version = "36.0", default-features = false, features = ["sync"], optional=true }
+wiggle = { version = "36.0", default-features = false, optional = true }
 
 [workspace]
 resolver = '2'
@@ -39,11 +41,13 @@ members = [
 [features]
 # default = ["quickjs-libc", "target-android", "target-aarch64", "jit"]
 # default = ["quickjs-libc", "external-aot", "quickjs-libc-test"]
-default = ["quickjs-libc", "external-aot", "max-rss"]
+default = ["quickjs-libc", "external-aot", "max-rss", "wasi"]
 
 quickjs-libc = ["rquickjs/quickjs-libc"]
 
 quickjs-libc-test = ["rust-allocator", "rquickjs/quickjs-libc-test"]
+
+wasi = ["wasi-common", "wiggle"]
 
 target-x86 = ["runtime/target-x86"]
 target-aarch64 = ["runtime/target-aarch64"]

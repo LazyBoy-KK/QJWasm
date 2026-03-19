@@ -1,3 +1,5 @@
+#[cfg(feature = "wasi")]
+use crate::wasi;
 use crate::{
     object_impl::{
         global::ConstGlobal,
@@ -12,6 +14,9 @@ use runtime::{
     panic_any, ExternType, ImportType, InstanceHandle, InstanceInner, VMArrayCall, VMArrayCallContext, VMContext, VMFuncRef, VMGlobal, VMGlobalInstance, ValRaw
 };
 use std::{cell::UnsafeCell, mem::ManuallyDrop, ptr::NonNull, sync::Arc};
+
+#[cfg(feature = "wasi")]
+use std::collections::HashMap;
 
 use super::{global::MutGlobal, store::ArrayCallInfo};
 
@@ -206,12 +211,41 @@ impl Instance {
             });
     }
 
+    fn try_import_wasi_func(
+        inst: &mut InstanceInner,
+        map: &HashMap<&str, VMFuncRef>,
+        import_index: u32,
+        func_idx: u32
+    ) -> bool {
+        let module: runtime::Module = inst.module().clone();
+        let import_ty = &module.metadata().imports[import_index as usize];
+        if import_ty.module != "wasi_snapshot_preview1" {
+            return false;
+        }
+        let import_func = &module.offsets().import_funcs[func_idx as usize];
+        let mut funcref = map.get(import_ty.name).unwrap().clone();
+        funcref.offset = import_func.offset;
+        funcref.type_index = import_func.type_index;
+        funcref.vmctx = inst.vmctx();
+        funcref.caller = inst.vmctx();
+        println!("import wasi function, module:{} name:{} offset:{} vmctx:{:x} native_call:{:x}", import_ty.module, import_ty.name, import_func.offset, inst.vmctx() as usize, funcref.native_call as usize);
+        unsafe { inst.init_import_func(import_func, funcref); }
+        true
+    }
+
     pub fn new_post(mut info: InstanceInfo, thread_ctx: Option<ThreadCtx>) -> Result<Self> {
         let mut raw_instance = info.instance_handle.handle.as_mut();
         raw_instance.set_host_state(Box::new(info.state.clone()));
+        #[cfg(feature = "wasi")]
+        let wasi_map = wasi::get_wasi_map();
         for ext in info.extern_vec {
             match ext.inner {
                 Extern::Func(func_idx) => {
+                    #[cfg(feature = "wasi")]
+                    if Instance::try_import_wasi_func(&mut raw_instance, &wasi_map, ext.index, func_idx) {
+                        continue;
+                    }
+
                     let boxed_array_call = Box::new(
                         move |vmctx: *mut VMContext, params: *mut ValRaw| -> runtime::Result<()> {
                             unsafe {
@@ -288,8 +322,8 @@ impl Instance {
         import_object: Option<Object<'js>>,
     ) -> Result<Vec<ExternWrapper>> {
         let mut res = Vec::new();
-        if let Some(import_object) = import_object {
-            for import_ty in module.get_module().imports() {
+        for import_ty in module.get_module().imports() {
+            if let Some(import_object) = import_object.as_ref() {
                 if let Ok(obj) = import_object.get::<&str, Object>(import_ty.module()) {
                     if let Ok(val) = obj.get::<&str, Value>(import_ty.name()) {
                         let item = Self::add_import_inner(ctx, state, val.clone(), &import_ty)?;
@@ -300,14 +334,14 @@ impl Instance {
                     }
                 }
             }
-        }
-        let mut wasi_import_len: usize = 0;
-        for import in module.get_module().imports() {
-            if import.module() == "wasi_snapshot_preview1" {
-                wasi_import_len += 1;
+            if import_ty.module() == "wasi_snapshot_preview1" {
+                res.push(ExternWrapper {
+                    index: import_ty.index(),
+                    inner: Extern::Func(import_ty.index())
+                });
             }
         }
-        if res.len() != module.get_module().imports().len() - wasi_import_len {
+        if res.len() != module.get_module().imports().len() {
             Err(rquickjs::Error::new_type_error(
                 "Missing import object".to_string(),
             ))

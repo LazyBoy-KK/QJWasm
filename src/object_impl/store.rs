@@ -2,6 +2,9 @@ use rquickjs::{Context, ContextWrapper, DeepSizeCtx, ImportJsFuncRes, JSValueHan
 use runtime::{FuncType, ValRaw, VMContext, VMArrayCallContext, VMArrayCall};
 use std::{cell::UnsafeCell, collections::HashMap, sync::Arc};
 
+#[cfg(feature = "wasi")]
+use wasi_common::{WasiCtx, sync::{WasiCtxBuilder, Dir, ambient_authority}};
+
 use crate::{
     object_impl::utils::call_func, wasm, RefCapture, SavedValue, SendSlices
 };
@@ -73,6 +76,8 @@ impl rquickjs::DeepSizeOf for ArrayCallInfo {
 
 pub struct WasmSideState {
     array_calls: Vec<ArrayCallInfo>,
+    #[cfg(feature = "wasi")]
+    wasi_ctx: WasiCtx,
 }
 
 impl rquickjs::DeepSizeOf for WasmSideState {
@@ -190,9 +195,23 @@ impl rquickjs::DeepSizeOf for State {
 
 impl State {
     pub fn new() -> Self {
+        #[cfg(feature = "wasi")]
+        let wasi_ctx = {
+            let mut builder = WasiCtxBuilder::new();
+            builder.inherit_stdout()
+                .inherit_stderr()
+                .inherit_env().unwrap();
+            let dir = Dir::open_ambient_dir(std::env::current_dir().unwrap(), ambient_authority())
+                .unwrap();
+            builder.preopened_dir(dir, "/").unwrap();
+            builder.build()
+        };
+
         State {
             wasm: WasmSideState {
-                array_calls: Vec::new()
+                array_calls: Vec::new(),
+                #[cfg(feature = "wasi")]
+                wasi_ctx,
             },
             js: JSSideState {
                 ctx_ref: 0,
@@ -213,6 +232,11 @@ impl State {
 
     pub fn get_ctx(&self) -> Option<&ContextWrapper> {
         self.js.ctx.as_ref()
+    }
+
+    #[cfg(feature = "wasi")]
+    pub fn get_wasi_ctx(&mut self) -> &mut WasiCtx {
+        &mut self.wasm.wasi_ctx
     }
 
     pub fn js_mem_mut<'js>(&mut self) -> &mut SavedValue {

@@ -2,6 +2,8 @@
 #![feature(hash_set_entry)]
 
 mod object_impl;
+#[cfg(feature = "wasi")]
+mod wasi;
 
 use once_cell::sync::Lazy;
 use std::cell::RefCell;
@@ -25,6 +27,7 @@ static ENGINE: Lazy<runtime::Engine> = Lazy::new(|| {
 		config.aot_compiler_args = vec![String::from("--disable-native-init")];
     }
     #[cfg(any(feature = "jit", feature = "external-aot"))]
+    #[cfg(not(feature = "wasi"))]
     {
         config.force_linkage = Some(runtime::ImportFuncLinkage::FuncRef);
     }
