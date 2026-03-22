@@ -60,6 +60,14 @@ impl Memory {
                 .map_err(|e| Error::new_range_error(e.to_string()))
         }
     }
+
+    pub fn detach_buffer(&mut self, ctx: rquickjs::Ctx) -> Result<()> {
+        if let Some(value) = self.buffer_cache.get_own_value() {
+            let mut buffer = rquickjs::ArrayBuffer::from_value(value.restore(ctx)?)?;
+            buffer.detach();
+        }
+        Ok(())
+    }
 }
 
 impl rquickjs::HasRefs for Memory {

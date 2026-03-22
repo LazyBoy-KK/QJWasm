@@ -131,15 +131,47 @@ impl<'js, A, R> rquickjs::AsFunction<'js, A, R> for Function {
         };
 
         if !self.is_async {
+            check_safeguard(&instance.state)?;
             sync_call(ctx, instance, wrapper)
         } else {
 			if instance.thread_ctx.is_none() {
 				instance.thread_ctx = Some(ThreadCtx::new(ctx));
 			}
+            let state_clone = instance.state.clone();
+            try_set_safeguard(&state_clone, true)?;
 			let thread_ctx = instance.thread_ctx.as_ref().unwrap();
-            async_call(ctx, instance.state.clone(), persist_instance, wrapper, thread_ctx)
+            async_call(ctx, state_clone, persist_instance, wrapper, thread_ctx)
         }
     }
+}
+
+fn detect_safeguard(safeguard: bool) -> rquickjs::Result<()> {
+    match safeguard {
+        false => Ok(()),
+        true => Err(rquickjs::Error::new_custom_error::<RuntimeError>(
+            "RuntimeError".to_string(), 
+            "Safeguard violated".to_string()
+        ))
+    }
+}
+
+fn check_safeguard(state: &StateData) -> rquickjs::Result<()> {
+    let state_inner = state.get_mut_state();
+    for safeguard in state_inner.safeguards() {
+        detect_safeguard(safeguard.get())?;
+    }
+    Ok(())
+}
+
+fn try_set_safeguard(
+    state: &StateData,
+    set_value: bool,
+)  -> rquickjs::Result<()> {
+    let state_inner = state.get_mut_state();
+    for safeguard in state_inner.safeguards() {
+        detect_safeguard(set_value & safeguard.set(set_value))?;
+    }
+    Ok(())
 }
 
 fn sync_call<'js>(
@@ -193,7 +225,7 @@ fn async_call<'js>(
     let reject = SendSyncJsValue::new(ctx, reject.into_value());
 	let instance_ref = SendSyncJsValue::from_persist(instance_ref);
     let context = rquickjs::SendSyncContext::new(rquickjs::Context::from_ctx(ctx)?);
-    
+
     thread_ctx.spawn_wasm_task(ctx, context, Some(Box::new(move || {
         let res = wrapper.call();
         handle_err(res)?;
@@ -216,6 +248,7 @@ fn async_call<'js>(
 						instance.update_memory_after_call();
 						#[cfg(all(feature = "quickjs-libc", not(feature = "rust-allocator")))]
 						ctx.inc_malloc_size(instance.update_memory_after_call());
+                        try_set_safeguard(&instance.state, false)?;
                         match wasm_results.len() {
                             0 => Ok::<_, rquickjs::Error>(Box::new(rquickjs::Persistent::save(
                                 ctx,

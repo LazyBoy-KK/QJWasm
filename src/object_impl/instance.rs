@@ -1,15 +1,14 @@
 #[cfg(feature = "wasi")]
 use crate::wasi;
 use crate::{
-    object_impl::{
+    INSTANCE_REF_MAP, RefCapture, object_impl::{
         global::ConstGlobal,
         memory::MemoryRefManager,
         store::{State, StateData},
-        utils::{map_js_to_wasm, SavedValue},
-    },
-    wasm::{Function, Global, Instance, LinkError, Memory, Module, Table}, RefCapture, INSTANCE_REF_MAP
+        utils::{SavedValue, SharedSafeGuard, map_js_to_wasm},
+    }, wasm::{Function, Global, Instance, LinkError, Memory, Module, Table}
 };
-use rquickjs::{DeepSizeCtx, Error, JsMessageCtx, Object, Persistent, Result, ThreadCtx, Value, WasmMessageCtx};
+use rquickjs::{DeepSizeCtx, Error, FromJs, JsMessageCtx, Object, Persistent, Result, ThreadCtx, Value, WasmMessageCtx};
 use runtime::{
     panic_any, ExternType, ImportType, InstanceHandle, InstanceInner, VMArrayCall, VMArrayCallContext, VMContext, VMFuncRef, VMGlobal, VMGlobalInstance, ValRaw
 };
@@ -211,6 +210,7 @@ impl Instance {
             });
     }
 
+    #[cfg(feature = "wasi")]
     fn try_import_wasi_func(
         inst: &mut InstanceInner,
         map: &HashMap<&str, VMFuncRef>,
@@ -374,6 +374,15 @@ impl Instance {
                     ));
                 }
 
+                if let Ok(func_inner) = func.get_func_opaque::<Function, u8, u8>() {
+                    if let Some(value) = func_inner.instance_ref.get_value() {
+                        let inst_value = value.restore(ctx)?;
+                        let inst = <&Instance as FromJs>::from_js(ctx, inst_value)?;
+                        let inst_guard = inst.state.get_mut_state().safeguards()[0].clone();
+                        state.safeguards().push(inst_guard);
+                    }
+                }
+
                 state.insert_impfunc(
                     ctx,
                     func.into_value(),
@@ -456,7 +465,8 @@ impl Instance {
                             ty: gt,
 							cache,
                             instance_ref: SavedValue::default(),
-							ref_cap
+							ref_cap,
+                            safeguard: SharedSafeGuard::new(),
                         });
                         let g_js = <Global as rquickjs::IntoJs>::into_js(g, ctx)?;
                         state.js_global_mut().insert(ty.index(), Persistent::save(ctx, g_js.clone()));
@@ -530,20 +540,32 @@ impl Instance {
                 }
                 ExternType::Memory(_) => {
 					if let Some(mem) = state_inner.js_mem_mut().get_value() {
-						mem.restore(ctx)?
+                        let value = mem.restore(ctx)?;
+                        let mem_inner = <&Memory as rquickjs::FromJs>::from_js(ctx, value.clone())?;
+                        state_inner.safeguards().push(mem_inner.safeguard.clone());
+						value
 					} else {
 						let vmmemory = raw_instance.get_memory().unwrap();
 						let memory = Memory {
 							inner: MemoryRefManager::new(vmmemory),
 							buffer_cache: SavedValue::default(),
 							instance_ref: Some(self.inner.clone()),
+                            safeguard: SharedSafeGuard::new(),
 						};
+                        state_inner.safeguards().push(memory.safeguard.clone());
 						memory.into_js(ctx)?
 					}
                 }
                 ExternType::Global(ty) => {
-					if let Some(g) = state_inner.js_global().get(&export.index()) {
-						g.clone().restore(ctx)?
+					if let Some(g) = state_inner.js_global().get(&export.index()).map(|e| e.clone()) {
+                        let value = g.restore(ctx)?;
+                        let g_inner = <&Global as rquickjs::FromJs>::from_js(ctx, value.clone())?;
+                        match g_inner {
+                            Global::Mut(g_mut) =>
+                                state_inner.safeguards().push(g_mut.safeguard.clone()),
+                            Global::Const(_) => {}
+                        }
+						value
 					} else {
 						let global = match &raw_instance.module().clone().offsets().globals
 							[export.index() as usize]
@@ -555,13 +577,16 @@ impl Instance {
 								if let Some(ref_cap) = ref_cap.as_mut() {
 									ref_cap.insert_instanceref(raw_instance.vmctx() as _, persist.clone());
 								}
-								Global::Mut(MutGlobal {
+                                let g_mut = MutGlobal {
 									inner: UnsafeCell::new(ManuallyDrop::new(vmglobal)),
 									ty,
 									cache: SavedValue::default(),
 									instance_ref: SavedValue::new(persist),
-									ref_cap: RefCapture::new(ty.content())
-								})
+									ref_cap: RefCapture::new(ty.content()),
+                                    safeguard: SharedSafeGuard::new(),
+								};
+                                state_inner.safeguards().push(g_mut.safeguard.clone());
+							    Global::Mut(g_mut)
 							}
 							VMGlobal::Const(g) => Global::Const(ConstGlobal {
 								inner: VMGlobalInstance::new(ty, g.val).unwrap(),
@@ -573,8 +598,11 @@ impl Instance {
 					}
                 }
                 ExternType::Table(_) => {
-					if let Some(t) = state_inner.js_table().get(&export.index()) {
-						t.clone().restore(ctx)?
+					if let Some(t) = state_inner.js_table().get(&export.index()).map(|t| t.clone()) {
+                        let value = t.restore(ctx)?;
+                        let t_inner = <&Table as rquickjs::FromJs>::from_js(ctx, value.clone())?;
+                        state_inner.safeguards().push(t_inner.safeguard.clone());
+						value
 					} else {
 						let vmtable = &module.offsets().tables[export.index() as usize];
 						let table = unsafe { raw_instance.get_table(vmtable) };
@@ -586,7 +614,9 @@ impl Instance {
 							saved_vec: Vec::new(),
 							instance_ref: SavedValue::new(persist),
 							ref_cap,
+                            safeguard: SharedSafeGuard::new(),
 						};
+                        state_inner.safeguards().push(table.safeguard.clone());
 						table.into_js(ctx)?
 					}
                 }

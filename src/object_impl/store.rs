@@ -6,7 +6,7 @@ use std::{cell::UnsafeCell, collections::HashMap, sync::Arc};
 use wasi_common::{WasiCtx, sync::{WasiCtxBuilder, Dir, ambient_authority}};
 
 use crate::{
-    object_impl::utils::call_func, wasm, RefCapture, SavedValue, SendSlices
+    RefCapture, SavedValue, SendSlices, object_impl::{utils::{SharedSafeGuard, call_func}}, wasm,
 };
 
 #[derive(Clone)]
@@ -39,6 +39,8 @@ pub struct JSSideState {
     js_mem: SavedValue,
 	js_global: HashMap<u32, Persistent<rquickjs::Value<'static>>>,
 	js_table: HashMap<u32, Persistent<rquickjs::Value<'static>>>,
+    // safeguard of memory, global and table
+    safeguards: Vec<SharedSafeGuard>,
 	captured_instanceref: RefCapture,
 	captured_externref: RefCapture,
 }
@@ -220,6 +222,8 @@ impl State {
                 js_mem: SavedValue::default(),
 				js_global: HashMap::new(),
 				js_table: HashMap::new(),
+                // The first safe guard belongs to instance itself
+                safeguards: vec![SharedSafeGuard::new()],
 				captured_instanceref: RefCapture::new(runtime::ValType::Ref(runtime::RefType::FUNCREF)).unwrap(),
 				captured_externref: RefCapture::new(runtime::ValType::Ref(runtime::RefType::EXTERNREF)).unwrap(),
             },
@@ -250,6 +254,10 @@ impl State {
 	pub fn js_global_mut(&mut self) -> &mut HashMap<u32, Persistent<rquickjs::Value<'static>>> {
 		&mut self.js.js_global
 	}
+
+    pub fn safeguards(&mut self) ->&mut Vec<SharedSafeGuard> {
+        &mut self.js.safeguards
+    }
 
 	pub fn js_table(&self) -> &HashMap<u32, Persistent<rquickjs::Value<'static>>> {
 		&self.js.js_table

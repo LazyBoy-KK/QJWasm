@@ -1,7 +1,7 @@
 use std::{cell::UnsafeCell, mem::ManuallyDrop};
 
 use runtime::{VMGlobalInstance, GlobalType};
-use crate::{map_wasm_to_js, wasm::Global, RefCapture, SavedValue, INSTANCE_REF_MAP};
+use crate::{INSTANCE_REF_MAP, RefCapture, SavedValue, map_wasm_to_js, object_impl::utils::SharedSafeGuard, wasm::{Global, RuntimeError}};
 use rquickjs::{IntoJs, Object, Persistent, Result};
 
 impl rquickjs::DeepSizeOf for Global {}
@@ -13,6 +13,7 @@ pub struct MutGlobal {
 	pub(crate) instance_ref: SavedValue,
 	pub(crate) cache: SavedValue,
 	pub(crate) ref_cap: Option<RefCapture>,
+	pub(crate) safeguard: SharedSafeGuard,
 }
 
 impl Global {
@@ -73,6 +74,9 @@ impl Global {
 	pub fn get_impl<'js>(&mut self, ctx: rquickjs::Ctx<'js>) -> Result<rquickjs::Value<'js>> {
 		match self {
 			Global::Mut(g) => {
+				if g.safeguard.get() {
+					return Ok(rquickjs::Value::new_undefined(ctx));
+				}
 				let val = g.get_inner_mut().get();
 				if g.ty.content() == runtime::ValType::Ref(runtime::RefType::FUNCREF) {
 					let funcref = val.funcref().unwrap();
@@ -158,6 +162,12 @@ impl Global {
     pub fn set_impl<'js>(&mut self, ctx: rquickjs::Ctx<'js>, val: runtime::Val, js_val: rquickjs::Value<'js>) -> Result<()> {
         match self {
             Global::Mut(g) => {
+				if g.safeguard.get() {
+					return Err(rquickjs::Error::new_custom_error::<RuntimeError>(
+						"RuntimeError".to_string(), 
+						"safeguard violated".to_string()
+					));
+				}
 				if g.ty.content().is_reference_type() {
 					g.cache.set_value(Persistent::save(ctx, js_val.clone()));
 				}

@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, ptr::NonNull};
+use std::{cell::UnsafeCell, collections::{HashMap, HashSet}, ptr::NonNull, sync::Arc};
 use rquickjs::{Array, IntoJs, Persistent};
 use runtime::{CustomExternRef, ValRaw, ValType};
 
@@ -584,3 +584,27 @@ impl rquickjs::HasRefs for RefCapture {
 
 unsafe impl Send for RefCapture {}
 unsafe impl Sync for RefCapture {}
+
+#[derive(Clone)]
+pub struct SharedSafeGuard(Arc<UnsafeCell<bool>>);
+
+impl SharedSafeGuard {
+    pub fn new() -> Self {
+        Self(Arc::new(UnsafeCell::new(false)))
+    }
+
+    fn inner_mut(&self) -> &mut bool {
+        unsafe { &mut *self.0.get() }
+    }
+
+    pub fn set(&self, value: bool) -> bool {
+        let inner = self.inner_mut();
+        let pre = *inner;
+        *inner = value;
+        pre
+    }
+
+    pub fn get(&self) -> bool {
+        *self.inner_mut()
+    }
+}

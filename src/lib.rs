@@ -23,7 +23,7 @@ static ENGINE: Lazy<runtime::Engine> = Lazy::new(|| {
     let mut config = runtime::Config::default();
     #[cfg(feature = "external-aot")]
     {
-        config.aot_compiler = PathBuf::from("/home/kotoba/project/wasm/quickjs-wasm/wasm-llvm");
+        config.aot_compiler = PathBuf::from("/home/kotoba/projects/quickjs-wasm-qemu/wasm/iwasm-rs/target/release/wasm-llvm");
 		config.aot_compiler_args = vec![String::from("--disable-native-init")];
     }
     #[cfg(any(feature = "jit", feature = "external-aot"))]
@@ -371,6 +371,7 @@ mod wasm {
         pub(crate) inner: MemoryRefManager,
         pub(crate) buffer_cache: SavedValue,
         pub(crate) instance_ref: Option<InstanceCount>,
+        pub(crate) safeguard: SharedSafeGuard,
     }
 
     impl Memory {
@@ -429,6 +430,7 @@ mod wasm {
                 inner: MemoryRefManager::new(mem_instance),
                 buffer_cache: SavedValue::default(),
                 instance_ref: None,
+                safeguard: SharedSafeGuard::new(),
             })
         }
 
@@ -438,6 +440,9 @@ mod wasm {
             ctx: rquickjs::Ctx<'js>,
             _rest: Rest<Value<'js>>,
         ) -> Result<Value<'js>> {
+            if self.safeguard.get() {
+                return Ok(rquickjs::Value::new_undefined(ctx));
+            }
             let (ptr, len) = self.get_memory_buffer();
             if let Some(persist_value) = self.buffer_cache.get_value() {
                 let buffer = rquickjs::ArrayBuffer::from_value(persist_value.restore(ctx)?)?;
@@ -480,6 +485,9 @@ mod wasm {
             count: Value<'js>,
             _rest: Rest<Value<'js>>,
         ) -> Result<u32> {
+            if self.safeguard.get() {
+                return Ok(0);
+            }
             let count = convert_js_value_to_uint(ctx, count)?;
             let res = self.grow_memory(count)?;
 			if let Some(instance) = &self.instance_ref {
@@ -563,6 +571,7 @@ mod wasm {
 				cache,
                 instance_ref: SavedValue::default(),
 				ref_cap: ref_capture,
+                safeguard: SharedSafeGuard::new(),
             }))
         }
 
@@ -630,6 +639,7 @@ mod wasm {
         pub(crate) saved_vec: Vec<SavedValue>,
 		pub(crate) instance_ref: SavedValue,
 		pub(crate) ref_cap: RefCapture,
+        pub(crate) safeguard: SharedSafeGuard,
     }
 
     impl Table {
@@ -722,7 +732,8 @@ mod wasm {
                 inner,
                 saved_vec,
 				instance_ref: SavedValue::default(),
-				ref_cap
+				ref_cap,
+                safeguard: SharedSafeGuard::new(),
             })
         }
 
@@ -733,6 +744,9 @@ mod wasm {
             index: Value<'js>,
             _rest: Rest<Value<'js>>,
         ) -> Result<Value<'js>> {
+            if self.safeguard.get() {
+                return Ok(rquickjs::Value::new_undefined(ctx));
+            }
             let index = map_js_to_u32(ctx, index)?
                 .ok_or_else(|| rquickjs::Error::new_from_js("Value", "positive int"))?;
             self.get_impl(ctx, index)
@@ -745,6 +759,12 @@ mod wasm {
             index: Value<'js>,
             rest: Rest<Value<'js>>,
         ) -> Result<()> {
+            if self.safeguard.get() {
+                return Err(rquickjs::Error::new_custom_error::<RuntimeError>(
+                    "RuntimeError".to_string(), 
+                    "safeguard violated".to_string()
+                ));
+            }
             let index = convert_js_value_to_uint(ctx, index)?;
             let value = get_optional(rest).unwrap_or(Value::new_null(ctx));
             self.set_impl(ctx, index, value)
@@ -758,6 +778,9 @@ mod wasm {
             init: Opt<Value<'js>>,
             _rest: Rest<Value<'js>>,
         ) -> Result<u32> {
+            if self.safeguard.get() {
+                return Ok(0);
+            }
             let delta = convert_js_value_to_uint(ctx, delta)?;
             let value = init.into_inner().unwrap_or(Value::new_null(ctx));
             self.grow_impl(ctx, delta, value)
@@ -765,6 +788,9 @@ mod wasm {
 
         #[quickjs(get, enumerable, configurable, func_name = "get length")]
         pub fn length(&self, _rest: Rest<Value>) -> u32 {
+            if self.safeguard.get() {
+                return 0;
+            }
             self.inner.size()
         }
 

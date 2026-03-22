@@ -75,31 +75,27 @@ async function init() {
     console.log("instance exports:");
     console.log(Object.keys(instance.exportsAsync));
 
-    console.log(instance.exportsAsync["_initialize"] instanceof Function)
+    console.log(instance.exportsAsync["_initialize"] instanceof Function);
     await instance.exportsAsync["_initialize"]();
 
     const add = instance.exportsAsync["add"];
-    console.log(typeof add)
-    add(1, 2).then(res => {
-        console.log("1+2=", res);
-    })
-    add.apply(null, [3, 6]).then(res => {
-        console.log("3+6=", res);
-    })
+    console.log(typeof add);
+    console.log("1+2=", await add(1, 2));
+    console.log("3+6=", await add.apply(null, [3, 6]));
 
     const helloPtr = instance.exportsAsync["hello-ptr"];
     const helloLen = instance.exportsAsync["hello-len"];
     const ptr = await helloPtr();
     const len = await helloLen();
-    const memory = instance.exportsAsync["memory"]
+    const memory = instance.exportsAsync["memory"];
     const hello = new Uint8Array(memory.buffer, ptr, len);
     const UTF8 = new TextDecoder("utf-8");
     const helloString = UTF8.decode(hello);
     console.log(helloString);
 
     const doCalc = instance.exportsAsync["calc"];
-    console.log(await doCalc(3, 6))
-    console.log(await doCalc(2, 6))
+    console.log(await doCalc(3, 6));
+    console.log(await doCalc(2, 6));
 
     const addAll = instance.exportsAsync["add-all"];
     const malloc = instance.exportsAsync["malloc"];
